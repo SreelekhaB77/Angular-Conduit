@@ -1,0 +1,86 @@
+steps:
+  # Step 1: Copy project files from Cloud Storage to build environment
+  - name: 'gcr.io/cloud-builders/gsutil'
+    args: ['cp', '-r', 'gs://bucket-0807/angular/angular-realworld-example-app-main', '.']
+
+  # Step 2: Install Node.js, npm, and Angular CLI on the VM instance
+  - name: 'gcr.io/cloud-builders/gcloud'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        gcloud compute ssh sree@instance-0807 --zone=us-central1-c --command "
+          sudo apt update -y && \
+          sudo apt install -y curl && \
+          curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash - && \
+          sudo apt-get install -y nodejs && \
+          sudo npm install -g @angular/cli && \
+          node -v && \
+          npm -v && \
+          ng --version"
+
+  # Step 3: Build the Angular application in a container with updated Node.js
+  - name: 'ubuntu:22.04'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        set -x
+        apt-get update && \
+        apt-get install -y curl && \
+        curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
+        apt-get install -y nodejs && \
+        npm install -g @angular/cli && \
+        cd angular-realworld-example-app-main && \
+        npm install && \
+        npx ng build --configuration=production && \
+        ls -al dist/
+
+  # Step 4: Transfer built files to VM instance via SSH
+  - name: 'gcr.io/cloud-builders/gcloud'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        set -x
+        gcloud compute scp --recurse angular-realworld-example-app-main/dist/ \
+          sree@instance-0807:/home/sree/ \
+          --zone=us-central1-c
+
+  # Step 5: Configure NGINX on the VM instance
+  - name: 'gcr.io/cloud-builders/gcloud'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        set -x
+        gcloud compute ssh sree@instance-0807 --zone=us-central1-c --command="
+          sudo apt update && \
+          sudo apt install -y nginx && \
+          [ -f /etc/nginx/sites-enabled/default ] && sudo rm /etc/nginx/sites-enabled/default || echo 'Default site configuration not found, skipping removal' && \
+          sudo rm /etc/nginx/sites-enabled/angular || echo 'No previous angular site configuration found, skipping removal' && \
+          echo 'server {
+              listen 80;
+              server_name 34.123.12.225;
+              root /var/www/html/angular-conduit/browser;
+
+              location / {
+                  try_files \$uri \$uri/ /index.html;
+              }
+          }' | sudo tee /etc/nginx/sites-available/angular && \
+          sudo ln -s /etc/nginx/sites-available/angular /etc/nginx/sites-enabled/angular && \
+          sudo systemctl restart nginx"
+
+  # Step 6: SSH into VM instance and move the files to the web directory with proper permissions
+  - name: 'gcr.io/cloud-builders/gcloud'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        set -x
+        gcloud compute ssh sree@instance-0807 --zone=us-central1-c --command="
+          sudo cp -r /home/sree/dist/* /var/www/html/ && \
+          sudo systemctl restart nginx && \
+          sudo systemctl status nginx"
+
+timeout: '2400s'
