@@ -1,5 +1,6 @@
 options:
-  logs_bucket: gs://bucket-0608/
+  logging: CLOUD_LOGGING_ONLY
+
 steps:
   # Step 1: Copy project files from Cloud Storage to build environment
   - name: 'gcr.io/cloud-builders/gsutil'
